@@ -4,6 +4,8 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:youtube/features/mqtt/presentation/views/mqtt_view.dart';
 import 'package:youtube/features/youtube/presentation/views/youtube_view.dart';
 
+import 'my_test.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
@@ -22,7 +24,6 @@ class YoutubeTask extends StatelessWidget {
   Widget build(BuildContext context) {
     return  MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Youtube Player Flutter',
       theme: ThemeData(
         colorSchemeSeed: Colors.blue,
         appBarTheme: const AppBarTheme(
@@ -37,7 +38,7 @@ class YoutubeTask extends StatelessWidget {
           color: Colors.blueAccent,
         ),
       ),
-      home: YoutubeView(),
+      home:  const YoutubePlayer(),
     );
   }
 }

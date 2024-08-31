@@ -1,300 +1,201 @@
-import 'dart:developer';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:youtube/features/youtube/presentation/views/widgets/video_details.dart';
-import 'package:youtube/features/mqtt/presentation/views/mqtt_view.dart';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
+import 'package:pod_player/pod_player.dart';
+import 'package:volume_controller/volume_controller.dart';
 
-class YoutubeView extends StatefulWidget {
-  const YoutubeView({super.key});
+import '../../../mqtt/presentation/views/mqtt_view.dart';
+
+class YoutubePlayer extends StatefulWidget {
+  const YoutubePlayer({super.key});
 
   @override
-  State<YoutubeView> createState() => _YoutubeViewState();
+  State<YoutubePlayer> createState() => _PlayVideoFromYoutubeState();
 }
 
-class _YoutubeViewState extends State<YoutubeView> {
-  late YoutubePlayerController controller;
-  late TextEditingController idController;
-
-  late PlayerState playerState;
-  late YoutubeMetaData videoMetaData;
-  double volume = 100;
-  bool isMuted = false;
-  bool isPlayerReady = false;
+class _PlayVideoFromYoutubeState extends State<YoutubePlayer> {
+  late final PodPlayerController controller;
+  final videoTextFieldCtr = TextEditingController();
+  bool _isLoading = false;
+  String _currentVideoUrl = '';
+  double _volume = 1.0;
+  String initialVideo = 'https://www.youtube.com/watch?v=t9ObLFw7N-E';
 
   @override
   void initState() {
     super.initState();
-    controller = YoutubePlayerController(
-      initialVideoId: 't9ObLFw7N-E',
-      flags: const YoutubePlayerFlags(
-        mute: false,
-        autoPlay: true,
-        disableDragSeek: false,
-        loop: false,
-        isLive: false,
-        forceHD: false,
-        enableCaption: true,
+    controller = PodPlayerController(
+      playVideoFrom: PlayVideoFrom.youtube(initialVideo), // Initially no video
+      podPlayerConfig: const PodPlayerConfig(
+        autoPlay: false,
       ),
-    )..addListener(listener);
-    idController = TextEditingController();
-    videoMetaData = const YoutubeMetaData();
-    playerState = PlayerState.unknown;
+    )..initialise();
+    _getSystemVolume();
   }
 
-  void listener() {
-    if (isPlayerReady && mounted && !controller.value.isFullScreen) {
-      setState(() {
-        playerState = controller.value.playerState;
-        videoMetaData = controller.metadata;
-      });
-    }
-  }
-
-  @override
-  void deactivate() {
-    controller.pause();
-    super.deactivate();
+  Future<void> _getSystemVolume() async {
+    final volume = await VolumeController().getVolume();
+    setState(() {
+      _volume = volume;
+    });
   }
 
   @override
   void dispose() {
     controller.dispose();
-    idController.dispose();
     super.dispose();
+  }
+
+  void _setVolume(double volume) {
+    VolumeController().setVolume(volume);
+    setState(() {
+      _volume = volume;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return YoutubePlayerBuilder(
-      onExitFullScreen: () {
-        SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-      },
-      player: buildYoutubePlayer(),
-      builder: (context, player) {
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text(
-              'Youtube Player',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: Colors.redAccent,
-          ),
-          body: GestureDetector(
-            onTap: () {
-              FocusScope.of(context).unfocus();
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    player,
-                    const SizedBox(height: 20),
-                    VideoDetails(
-                      videoMetaData: videoMetaData,
-                    ),
-                    const SizedBox(height: 20),
-                    videoActions(),
-                    const SizedBox(height: 20),
-                    volumeControl(),
-                    const SizedBox(height: 64),
-                    const Divider(thickness: 2),
-                    const SizedBox(
-                      height: 20,
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent,
-                      ),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const MqttView(),
-                          ),
-                        );
-                      },
-                      child: const Text('MQTT client',style: TextStyle(color: Colors.white),),
-                    ),
-                  ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('YouTube Player'),
+        backgroundColor: Colors.redAccent,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  PodVideoPlayer(controller: controller),
+                const SizedBox(height: 20),
+                _loadVideoFromUrl(),
+                const SizedBox(height: 20),
+                _volumeControl(),
+                const SizedBox(
+                  height: 64,
                 ),
-              ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MqttView(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'MQTT client',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
-  YoutubePlayer buildYoutubePlayer() {
-    return YoutubePlayer(
-      controller: controller,
-      showVideoProgressIndicator: true,
-      progressIndicatorColor: Colors.redAccent,
-      topActions: <Widget>[
-        const SizedBox(width: 8.0),
-        Expanded(
-          child: Text(
-            controller.metadata.title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18.0,
-            ),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
-          ),
-        ),
-        IconButton(
-          icon: const Icon(
-            Icons.settings,
-            color: Colors.white,
-            size: 25.0,
-          ),
-          onPressed: () {
-            log('Settings Tapped!');
-          },
-        ),
-      ],
-      onReady: () {
-        isPlayerReady = true;
-      },
-    );
-  }
-
-  Widget videoActions() {
+  Widget _loadVideoFromUrl() {
     return Row(
       children: [
         Expanded(
+          flex: 2,
           child: TextField(
-            enabled: isPlayerReady,
-            controller: idController,
+            controller: videoTextFieldCtr,
             decoration: InputDecoration(
-              hintText: 'Youtube Link or ID',
-              hintStyle: const TextStyle(color: Colors.grey),
-              filled: true,
-              fillColor: Colors.grey[200],
+              labelText: 'Enter YouTube URL/ID',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              hintText: 'https://youtu.be/t9ObLFw7N-E',
+              hintStyle: const TextStyle(
+                color: Colors.grey,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8.0),
-                borderSide: BorderSide.none,
-              ),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.clear),
-                onPressed: () => idController.clear(),
               ),
             ),
           ),
         ),
         const SizedBox(width: 10),
-        loadButton('LOAD'),
-        const SizedBox(width: 10),
-        IconButton(
-          icon:
-              Icon(controller.value.isPlaying ? Icons.stop : Icons.play_arrow),
-          color: Colors.redAccent,
-          onPressed: isPlayerReady
-              ? () {
-                  controller.value.isPlaying
-                      ? controller.pause()
-                      : controller.play();
-                  setState(() {});
-                }
-              : null,
+        ElevatedButton(
+          onPressed: () async {
+            if (videoTextFieldCtr.text.isEmpty) {
+              snackBar('Please enter the URL');
+              return;
+            }
+            setState(() {
+              _isLoading = true;
+            });
+            try {
+              snackBar('Loading....');
+              FocusScope.of(context).unfocus();
+              await controller.changeVideo(
+                playVideoFrom: PlayVideoFrom.youtube(videoTextFieldCtr.text),
+              );
+              setState(() {
+                _currentVideoUrl = videoTextFieldCtr.text;
+              });
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            } catch (e) {
+              snackBar('Unable to load,\n $e');
+            } finally {
+              setState(() {
+                _isLoading = false;
+              });
+            }
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.redAccent,
+          ),
+          child: const Text(
+            'Load',
+            style: TextStyle(color: Colors.white),
+          ),
         ),
       ],
     );
   }
 
-  Widget volumeControl() {
+  Widget _volumeControl() {
     return Row(
-      children: <Widget>[
+      children: [
         const Text(
           "Volume",
           style: TextStyle(fontWeight: FontWeight.w400),
         ),
         Expanded(
           child: Slider(
-            inactiveColor: Colors.grey[300],
-            value: volume,
+            value: _volume,
             min: 0.0,
-            max: 100.0,
+            max: 1.0,
             divisions: 10,
-            label: '${(volume).round()}',
-            onChanged: isPlayerReady
-                ? (value) {
-                    setState(() {
-                      volume = value;
-                    });
-                    controller.setVolume(volume.round());
-                  }
-                : null,
+            label: '${(_volume * 100).round()}%',
+            onChanged: (value) {
+              setState(() {
+                _volume = value;
+              });
+              _setVolume(value); // Call the method to update system volume
+            },
           ),
-        ),
-        IconButton(
-          icon: Icon(isMuted ? Icons.volume_off : Icons.volume_up),
-          onPressed: isPlayerReady
-              ? () {
-                  isMuted ? controller.unMute() : controller.mute();
-                  setState(() {
-                    isMuted = !isMuted;
-                  });
-                }
-              : null,
         ),
       ],
     );
   }
 
-  Widget loadButton(String action) {
-    return ElevatedButton(
-      onPressed: isPlayerReady
-          ? () {
-              if (idController.text.isNotEmpty) {
-                var id = YoutubePlayer.convertUrlToId(idController.text) ?? '';
-                if (action == 'LOAD') controller.load(id);
-                FocusScope.of(context).requestFocus(FocusNode());
-              } else {
-                showSnackBar('Source can\'t be empty!');
-              }
-            }
-          : null,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.redAccent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
+  void snackBar(String text) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: Colors.redAccent,
         ),
-        padding: const EdgeInsets.symmetric(vertical: 14.0),
-      ),
-      child: Text(
-        action,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w400,
-        ),
-      ),
-    );
-  }
-
-  void showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontWeight: FontWeight.w400,
-            fontSize: 16.0,
-          ),
-        ),
-        backgroundColor: Colors.redAccent,
-        behavior: SnackBarBehavior.floating,
-        elevation: 1.0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
-        ),
-      ),
-    );
+      );
   }
 }
